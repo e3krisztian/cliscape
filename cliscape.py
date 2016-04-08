@@ -20,7 +20,7 @@ from __future__ import print_function
 import argparse
 
 
-__all__ = 'ArgumentParser Command Parser'.split()
+__all__ = 'Command Parser'.split()
 
 
 class Command:
@@ -29,26 +29,16 @@ class Command:
     argparse (user input), and a function.
     '''
 
-    def configure_parser(self, parser):
-        '''
-        (advanced) Override to declare command arguments.
-
-        This is and advanced entry point, override only for commands that
-        need customization beyond `add_argument` calls
-        (e.g. custom argument groups).
-
-        Most of the time overriding `arguments` is enough
-        (default implementation just calls `arguments`).
-        '''
-        self.arguments(parser.add_argument)
-
     def arguments(self, arg):
         '''
-        Override to declare command arguments.
+        Declare command arguments by overriding it.
 
-        Use `arg` as if it would be `parser.add_argument` e.g. as
+        `arg` is `Parser.arg` - think of it as `argparser.add_argument`
+        e.g. these all work:
         arg('param')
         arg('--option', help='changes how the command behaves')
+
+        There is also an extension, see `Parser.arg` for details.
         '''
         pass
 
@@ -64,7 +54,7 @@ class Command:
 
     def run(self, args):
         '''
-        The function that gets called with the parsed arguments.
+        This is the function that gets called with the parsed arguments.
 
         You will want to override it!
         '''
@@ -72,15 +62,45 @@ class Command:
 
 
 class Parser:
-    def __init__(self, argumentparser):
-        self.argumentparser = argumentparser
+    '''
+    Wrapper for `argparse.ArgumentParser` with conveniences for multi-command
+    parsers.
+    '''
+
+    argparser = argparse.ArgumentParser
+
+    def __init__(self, argparser):
+        '''
+        Wrap an `argparse.ArgumentParser`.
+
+        See `new` on how to make a Parser.
+        '''
+        self.argparser = argparser
         # This is ugly :(
         # subparsers should be an `argparse` implementation detail, but is not
-        self._subparsers = self.argumentparser.add_subparsers()
+        self.__subparsers = None
 
         def print_help(args):
-            self.argumentparser.print_help()
-        self.argumentparser.set_defaults(_cliscape__run=print_help)
+            self.argparser.print_help()
+        self.argparser.set_defaults(_cliscape__run=print_help)
+
+    @classmethod
+    def new(cls, *args, **kwargs):
+        '''
+        Create a new `Parser`.
+
+        Arguments are passed to `argparse.ArgumentParser()` and the argparser
+        is wrapped as `Parser`.
+
+        This eliminates the need for users to import argparse.
+        '''
+        return cls(argparse.ArgumentParser(*args, **kwargs))
+
+    @property
+    def _subparsers(self):
+        if self.__subparsers is None:
+            self.__subparsers = self.argparser.add_subparsers()
+        return self.__subparsers
 
     def _make_command(self, commandish):
         '''
@@ -99,6 +119,28 @@ class Parser:
             raise NotImplementedError(
                 'Can not yet work with vanilla callables')
 
+    def arg(self, *args, **kwargs):
+        '''
+        Declare one or more arguments.
+
+        Same as `argparse.ArgumentParser.add_argument` with an extension:
+        when the first and only parameter is a function, it is called with
+        the parser to do some non-trivial work, like adding an argument group.
+
+        The argument help is fixed up to show the default value.
+        '''
+        assert args
+        if not kwargs and len(args) == 1 and callable(*args):
+            args[0](self)
+        else:
+            arg_kwargs = dict(kwargs)
+            if 'default' in kwargs:
+                # extend help with default
+                arg_kwargs['help'] = (
+                    '{} (default: {!r})'
+                    .format(kwargs.get('help', ''), kwargs['default']))
+            self.argparser.add_argument(*args, **arg_kwargs)
+
     def command(self, name, commandish, title):
         '''
         Declare a command.
@@ -110,12 +152,13 @@ class Parser:
         command = self._make_command(commandish)
         parser = self._subparsers.add_parser(
             name, help=title, description=command.description)
-        command.configure_parser(parser)
+        # declare arguments
+        command.arguments(self.__class__(parser).arg)
         parser.set_defaults(_cliscape__run=command.run)
 
     def commands(self, *names_commands_and_title):
         '''
-        Convenience for declaring more than one commands.
+        Declare any number of commands in one step.
 
         Takes a sequence of alternating names, commands and titles.
         '''
@@ -146,16 +189,5 @@ class Parser:
         '''
         Parse `argv` and dispatch to the appropriate command.
         '''
-        args = self.argumentparser.parse_args(argv)
+        args = self.argparser.parse_args(argv)
         args._cliscape__run(args)
-
-
-def ArgumentParser(*args, **kwargs):
-    '''
-    Convenience wrapper for `argparse.ArgumentParser`.
-
-    Has the same parameters, so look up `ArgumentParser`.
-    The returned object is however a `Parser` object, that
-    wraps the newly created `argparse.ArgumentParser`.
-    '''
-    return Parser(argparse.ArgumentParser(*args, **kwargs))
