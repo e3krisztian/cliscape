@@ -29,7 +29,7 @@ class Command:
     argparse (user input), and a function.
     '''
 
-    def arguments(self, arg):
+    def declare(self, arg):
         '''
         Declare command arguments by overriding it.
 
@@ -152,8 +152,7 @@ class Parser:
         command = self._make_command(commandish)
         parser = self._subparsers.add_parser(
             name, help=title, description=command.description)
-        # declare arguments
-        command.arguments(self.__class__(parser).arg)
+        command.declare(self.__class__(parser).arg)
         parser.set_defaults(_cliscape__run=command.run)
 
     def commands(self, *names_commands_and_title):
